@@ -10,6 +10,7 @@ import android.os.Looper;
 import android.widget.Toast;
 final class YoutubeVpnLaunch {
  private static boolean pending;
+ private static int requestVersion;
  static boolean connected(Context c) {
   ConnectivityManager m=(ConnectivityManager)c.getSystemService(Context.CONNECTIVITY_SERVICE);
   if(m==null)return false;
@@ -26,6 +27,9 @@ final class YoutubeVpnLaunch {
   i.putExtra("com.twofortyfouram.locale.intent.extra.BUNDLE",b);c.sendBroadcast(i);
  }
  static void stop(Context c) {
+  // Invalidate pending connect/launch callbacks so OFF cannot reconnect later.
+  requestVersion++;
+  pending=false;
   // TaskerReceiver requires a non-empty GUID even for OFF; OFF ignores the selected profile.
   command(c,"Default",false);
  }
@@ -34,13 +38,34 @@ final class YoutubeVpnLaunch {
   String pkg=target.getComponent().getPackageName();
   String guid=c.getSharedPreferences("vpn_auto",Context.MODE_PRIVATE).getString(VpnLaunchPolicy.profileKey(pkg),"");
   if(guid.isEmpty()) {Toast.makeText(c,"Сначала настройте VPN для этого приложения",Toast.LENGTH_LONG).show();return;}
+  startProfile(c,guid,()->c.startActivity(target));
+ }
+ static void select(Context c,String choice) {
+  if("OFF".equals(choice)) {
+   stop(c);
+   Toast.makeText(c,"Отключение VPN…",Toast.LENGTH_SHORT).show();
+   return;
+  }
+  String key=VpnMenuPolicy.profileKey(choice);
+  if(key==null)return;
+  String guid=c.getSharedPreferences("vpn_auto",Context.MODE_PRIVATE).getString(key,"");
+  if(guid.isEmpty()) {Toast.makeText(c,"Профиль VPN "+choice+" не настроен",Toast.LENGTH_LONG).show();return;}
+  startProfile(c.getApplicationContext(),guid,null);
+ }
+ private static void startProfile(Context c,String guid,Runnable ready) {
+  final int version=++requestVersion;
   pending=true;
   Handler h=new Handler(Looper.getMainLooper());
-  Toast.makeText(c,"Подключение VPN для приложения…",Toast.LENGTH_SHORT).show();
+  Toast.makeText(c,"Подключение VPN…",Toast.LENGTH_SHORT).show();
   Runnable connect=()->{
+   if(version!=requestVersion)return;
    command(c,guid,true);
    h.postDelayed(new Runnable(){int remaining=40;public void run(){
-    if(connected(c)) h.postDelayed(()->{pending=false;c.startActivity(target);},1500);
+    if(version!=requestVersion)return;
+    if(connected(c)) h.postDelayed(()->{
+     if(version!=requestVersion)return;
+     pending=false;if(ready!=null)ready.run();
+    },1500);
     else if(--remaining>0)h.postDelayed(this,500);
     else fail(c);
    }},500);
@@ -48,11 +73,12 @@ final class YoutubeVpnLaunch {
   if(connected(c)) {
    command(c,guid,false);
    h.postDelayed(new Runnable(){int remaining=30;public void run(){
+    if(version!=requestVersion)return;
     if(!connected(c))h.postDelayed(connect,700);
     else if(--remaining>0)h.postDelayed(this,500);
     else fail(c);
    }},500);
-  } else connect.run();
+  } else h.postDelayed(connect,700);
  }
  private static void fail(Context c) {
   pending=false;Toast.makeText(c,"VPN не подключился. Проверьте v2rayNG",Toast.LENGTH_LONG).show();

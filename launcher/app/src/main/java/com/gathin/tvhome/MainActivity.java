@@ -88,6 +88,7 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
     private TextView greeting;
     private View btnInputs;
     private TextView btnWifi;
+    private WifiDialog wifiDialog;
     private TextView btnVpn;
     private TextView shamsiDate;
     private boolean shamsi;
@@ -280,10 +281,10 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         btnInputs = findViewById(R.id.btnInputs);
         View btnSettings = findViewById(R.id.btnSettings);
         btnInputs.setOnClickListener(v -> showInputs());
-        btnWifi.setOnClickListener(v -> open(new Intent(Settings.ACTION_WIFI_SETTINGS)));
-        btnVpn.setOnClickListener(v -> openVpnApp());
+        btnWifi.setOnClickListener(v -> showWifi());
+        btnVpn.setOnClickListener(v -> showVpnProfiles());
         btnWifi.setOnLongClickListener(v -> {
-            open(new Intent(Settings.ACTION_WIFI_SETTINGS));
+            showWifi();
             return true;
         });
         btnSettings.setOnClickListener(v -> open(new Intent().setComponent(new ComponentName("com.android.settings", "com.asu.settings.TvMenuActivity"))));
@@ -450,6 +451,7 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         // Nothing of ours stays on screen over another app; an undecided prompt simply returns next time.
         if (cardPrompt != null) cardPrompt.dismiss();
         if (openPopup != null) openPopup.dismiss();
+        if (wifiDialog != null) { wifiDialog.dismiss(); wifiDialog = null; }
     }
 
     @Override
@@ -800,6 +802,26 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
     }
 
     /** Shows the Wi-Fi network name on the button when we can read it, otherwise the connection type. */
+    private void showWifi() {
+        if (checkSelfPermission(android.Manifest.permission.ACCESS_FINE_LOCATION)
+                != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+            requestPermissions(new String[]{android.Manifest.permission.ACCESS_FINE_LOCATION}, 710);
+            return;
+        }
+        if (wifiDialog != null) wifiDialog.dismiss();
+        wifiDialog = new WifiDialog(this);
+        wifiDialog.show();
+    }
+
+    @Override
+    public void onRequestPermissionsResult(int requestCode, @NonNull String[] permissions, @NonNull int[] results) {
+        super.onRequestPermissionsResult(requestCode, permissions, results);
+        if (requestCode == 710) {
+            if (results.length > 0 && results[0] == android.content.pm.PackageManager.PERMISSION_GRANTED) showWifi();
+            else Toast.makeText(this, R.string.wifi_permission, Toast.LENGTH_LONG).show();
+        }
+    }
+
     private void updateWifiLabel() {
         String text = getString(R.string.wifi);
         boolean online = false;
@@ -847,12 +869,21 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         btnVpn.setTextColor(getColorStateList(connected ? R.color.vpn_connected : R.color.vpn_disconnected));
     }
 
-    /** The dedicated VPN pill opens the configured VPN app. */
-    private void openVpnApp() {
-        String packageName = vpnApp.isEmpty() ? "com.v2ray.ang" : vpnApp;
-        Intent i = getPackageManager().getLeanbackLaunchIntentForPackage(packageName);
-        if (i == null) i = getPackageManager().getLaunchIntentForPackage(packageName);
-        open(i != null ? i : new Intent(Settings.ACTION_VPN_SETTINGS));
+    /** Profile selection stays on Home; status is based on the actual tunnel. */
+    private void showVpnProfiles() {
+        View panel = getLayoutInflater().inflate(R.layout.popup_inputs, root, false);
+        LinearLayout rows = panel.findViewById(R.id.rows);
+        PopupWindow popup = glassPopup(panel, (int) (200 * density));
+        String[] choices = {"HK", "RU", "OFF"};
+        boolean connected = YoutubeVpnLaunch.connected(this);
+        String current = getSharedPreferences("vpn_status", MODE_PRIVATE).getString("profile_code", "");
+        int selected = connected && "RU".equals(current) ? 1 : connected ? 0 : 2;
+        for (String choice : choices) {
+            addInputRow(rows, popup, "OFF".equals(choice) ? R.drawable.ic_power : R.drawable.ic_lock,
+                    choice, -1, () -> YoutubeVpnLaunch.select(this, choice));
+        }
+        dropIn(popup, panel, btnVpn, Gravity.END);
+        rows.getChildAt(selected).requestFocus();
     }
 
     /** Hides the Inputs pill when it would have nothing to list: streaming boxes have no HDMI-in, AV or tuner. */
