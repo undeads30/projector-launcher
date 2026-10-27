@@ -1,0 +1,11 @@
+**/.gradle/
+**/build/
+**/local.properties
+**/*.keystore
+**/*.jks
+**/test-output/
+**/build-location.txt
+**/*-before*.txt
+.idea/
+.vscode/
+.DS_Store
