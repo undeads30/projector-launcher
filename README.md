@@ -2,6 +2,8 @@
 
 Android TV launcher customized for the Cronus projector. Исходники и проверенные APK текущей версии.
 
+Сведения об устройстве и порядок уточнения модели: [PROJECTOR.md](PROJECTOR.md).
+
 ## Возможности
 
 - Четыре основные плитки на фоне обоев без общей чёрной панели.
