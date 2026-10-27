@@ -1,0 +1,74 @@
+# Projector Launcher
+
+Android TV launcher customized for the Cronus projector. Исходники и проверенные APK текущей версии.
+
+## Возможности
+
+- Четыре основные плитки на фоне обоев без общей чёрной панели.
+- Кнопка **≡ / MENU** открывает меню выбранного приложения: «Открыть», «Переместить», «Удалить».
+- Перемещение стрелками: ОК сохраняет порядок, «Назад» отменяет. Удаление требует системного подтверждения Android.
+- Меню приложений и входов HDMI используют общий стиль.
+- Отдельная кнопка VPN справа от Wi-Fi: зелёные **VPN: HK / VPN: RU**, красное **VPN** при отключении.
+- VPN открывает v2rayNG, Wi-Fi открывает настройки сети. Индикатор получает имя работающего профиля из уведомления v2rayNG.
+- Сохранены правила запуска YouTube/VK через настроенные VPN-профили и отключения VPN для Film.mov.
+- Отдельный помощник автоматически отменяет системное уведомление `HDMI1 Is Connected` (также HDMI2/HDMI3), сохраняя ручной выбор входов. Окно может кратковременно появиться.
+
+## Структура
+
+| Каталог | Содержимое |
+| --- | --- |
+| `launcher/` | Актуальный Gradle-проект Android-лаунчера `com.gathin.tvhome` |
+| `hdmi-autoclose/` | Исходники и сборка помощника `ru.projector.hdmiautoclose` |
+| `dist/` | Проверенные APK для восстановления установленной версии |
+
+VPN-профили, адреса серверов, пароли и закрытые ключи подписи не включены. Локальные резервные копии и история промежуточных APK также исключены.
+
+## Готовые APK
+
+Подключите проектор к ADB и замените `PROJECTOR_IP` его адресом:
+
+```powershell
+adb connect PROJECTOR_IP:5555
+adb -s PROJECTOR_IP:5555 install -r dist/LauncherTV.apk
+adb -s PROJECTOR_IP:5555 install -r dist/HDMI-Autoclose.apk
+adb -s PROJECTOR_IP:5555 shell am start -n com.gathin.tvhome/.MainActivity
+```
+
+Для имени профиля VPN нужен доступ к уведомлениям службы `VPN: HK / RU`:
+
+```powershell
+adb shell cmd notification allow_listener com.gathin.tvhome/.VpnStatusService
+```
+
+В специальных возможностях Android включите «Закрытие уведомления HDMI». Существующую службу FilmVpnService оставьте включённой. Не заменяйте целиком список служб специальных возможностей: он может содержать другие нужные службы.
+
+APK в `dist/` подписаны прежним ключом и предназначены для обновления с сохранением данных на исходном проекторе. Это резервная копия приложений, а не прошивка устройства. Настройка VPN-профилей выполняется отдельно в v2rayNG.
+
+## Сборка лаунчера
+
+Нужны JDK 17 и Android SDK с платформой 34 и Build Tools 34.0.0. На Windows используйте каталог с латинскими символами в пути. Установите `JAVA_HOME` и `ANDROID_HOME` либо создайте `launcher/local.properties` со значением `sdk.dir` для вашего SDK.
+
+```powershell
+cd launcher
+./gradlew.bat :app:testReleaseUnitTest :app:assembleRelease
+```
+
+На Linux/macOS используйте `./gradlew`. Результат: `launcher/app/build/outputs/apk/release/app-release.apk`.
+
+Закрытый ключ исходного проектора в Git не хранится. Для совместимого обновления положите его локальную резервную копию в `launcher/app/launcher-debug.keystore`. Без него Gradle создаст/использует обычный локальный Android debug key; такой APK нельзя установить поверх APK с другим ключом. Существующий лаунчер ради проверки сборки удалять не нужно.
+
+## Сборка помощника HDMI (Windows)
+
+```powershell
+./hdmi-autoclose/build.ps1 -AndroidSdk $env:ANDROID_HOME
+```
+
+JDK берётся из `JAVA_HOME`. При необходимости передайте `-SigningKey` с путём к вашему локальному debug keystore. Без него используется локальный стандартный debug keystore. Результат сохраняется в `hdmi-autoclose/build/HDMI-Autoclose.apk`. Проверки распознавания HDMI-диалога запускаются при сборке.
+
+## Проверка
+
+На текущих исходниках: 57 JVM-тестов лаунчера и 12 проверок помощника HDMI. На проекторе проверены HK/RU/выключенный VPN, меню по MENU, перемещение/отмена, вызов удаления/отмена, ручные входы и автозакрытие HDMI после перезагрузки.
+
+## Лицензии
+
+Основано на LauncherTV автора Gathin; исходная лицензия MIT сохранена в `LICENSE`. Шрифт Outfit распространяется по SIL Open Font License: `launcher/FONT-LICENSE-OFL.txt`.
