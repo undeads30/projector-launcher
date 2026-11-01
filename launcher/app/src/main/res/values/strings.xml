@@ -70,7 +70,7 @@
     <string name="wifi_open">Открытая</string>
     <string name="wifi_connecting_to">Подключение к %1$s…</string>
     <string name="wifi_empty">Сети не найдены. Нажмите «Обновить».</string>
-    <string name="wifi_choose">Выберите сеть · ОК: подключить · Назад: закрыть</string>
+    <string name="wifi_choose">Выберите сеть · ОК: подключить · Меню: действия · Назад: закрыть</string>
     <string name="wifi_already_connected">Эта сеть уже подключена.</string>
     <string name="wifi_android_restricted">Эта версия Android ограничивает прямое подключение из лаунчера.</string>
     <string name="wifi_security_unsupported">Этот тип защиты не поддерживается. Выберите сеть WPA/WPA2 или открытую сеть.</string>
@@ -78,4 +78,4 @@
     <string name="wifi_password_invalid">WPA/WPA2: 8–63 символа; WEP: 5/13 символов или HEX-ключ.</string>
     <string name="wifi_connect">Подключить</string>
     <string name="wifi_cancel">Отмена</string>
-</resources>
+<string name="wifi_connect_action">Подключиться</string><string name="wifi_forget">Забыть</string><string name="wifi_forgotten">Сеть забыта.</string><string name="wifi_forget_failed">Не удалось забыть сеть.</string><string name="wifi_disconnect_action">Отключиться</string><string name="wifi_disconnected">Сеть отключена.</string><string name="wifi_disconnect_failed">Не удалось отключиться от сети.</string></resources>

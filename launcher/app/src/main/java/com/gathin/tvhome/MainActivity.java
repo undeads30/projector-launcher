@@ -28,7 +28,6 @@ import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
-import android.os.SystemClock;
 import android.provider.Settings;
 import android.text.TextUtils;
 import android.view.Gravity;
@@ -89,6 +88,9 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
     private View btnInputs;
     private TextView btnWifi;
     private WifiDialog wifiDialog;
+    private SettingsSidebar settingsSidebar;
+    private InstalledAppsDialog installedAppsDialog;
+    private Dialog utilityDialog;
     private TextView btnVpn;
     private TextView shamsiDate;
     private boolean shamsi;
@@ -117,14 +119,18 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
     private boolean promptsPaused;
     /** The Inputs or Module cards dropdown while one is open, so onPause can close it. */
     private PopupWindow openPopup;
-    private PopupWindow appMenu;
+    private AppTileMenu appMenu;
     private String movingKey;
     private List<String> orderBeforeMove;
     private TextView moveHint;
+    private VpnHealthMonitor vpnHealth;
 
     private final Handler handler = new Handler(Looper.getMainLooper());
     private final SharedPreferences.OnSharedPreferenceChangeListener vpnStatusListener = (preferences, key) -> {
-        if ("profile_code".equals(key)) handler.post(this::updateVpnLabel);
+        if ("profile_code".equals(key)) handler.post(() -> {
+            if (vpnHealth != null) vpnHealth.refresh();
+            updateVpnLabel();
+        });
     };
     /** Refreshes the network pill when the connection changes: at boot Wi-Fi often connects after Home is shown. */
     private final ConnectivityManager.NetworkCallback networkCallback = new ConnectivityManager.NetworkCallback() {
@@ -171,6 +177,7 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
                     && intent.getBooleanExtra(Intent.EXTRA_REPLACING, false)) return;
             if (movingKey != null) finishMove(false);
             if (appMenu != null) appMenu.dismiss();
+            if (installedAppsDialog != null) { installedAppsDialog.dismiss(); installedAppsDialog = null; }
             reloadApps(false);
         }
     };
@@ -186,6 +193,7 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        VoiceSettingsActivity.ensureStarted(this);
         setContentView(R.layout.activity_main);
         density = getResources().getDisplayMetrics().density;
         // config.xml, overlaid by config.json from a pushed theme (see Config and tools/theme.sh).
@@ -287,7 +295,11 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
             showWifi();
             return true;
         });
-        btnSettings.setOnClickListener(v -> open(new Intent().setComponent(new ComponentName("com.android.settings", "com.asu.settings.TvMenuActivity"))));
+        btnSettings.setOnClickListener(v -> {
+            if (settingsSidebar != null) settingsSidebar.dismiss();
+            settingsSidebar = new SettingsSidebar(this, this::showWifi);
+            settingsSidebar.show();
+        });
         btnSettings.setOnLongClickListener(v -> {
             if (!moduleCards) return false;   // off: a long press does nothing, as before the feature
             showModuleCards();
@@ -363,6 +375,8 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
     @Override
     protected void onResume() {
         super.onResume();
+        vpnHealth = new VpnHealthMonitor(this, this::updateVpnLabel);
+        vpnHealth.start();
         getSharedPreferences("vpn_status", MODE_PRIVATE).registerOnSharedPreferenceChangeListener(vpnStatusListener);
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             registerReceiver(packageReceiver, packageFilter, Context.RECEIVER_NOT_EXPORTED);
@@ -443,6 +457,7 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
     @Override
     protected void onPause() {
         super.onPause();
+        if (vpnHealth != null) { vpnHealth.stop(); vpnHealth = null; }
         getSharedPreferences("vpn_status", MODE_PRIVATE).unregisterOnSharedPreferenceChangeListener(vpnStatusListener);
         if (movingKey != null) finishMove(false);
         if (appMenu != null) appMenu.dismiss();
@@ -452,6 +467,9 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         if (cardPrompt != null) cardPrompt.dismiss();
         if (openPopup != null) openPopup.dismiss();
         if (wifiDialog != null) { wifiDialog.dismiss(); wifiDialog = null; }
+        if (settingsSidebar != null) { settingsSidebar.dismiss(); settingsSidebar = null; }
+        if (installedAppsDialog != null) { installedAppsDialog.dismiss(); installedAppsDialog = null; }
+        if (utilityDialog != null) { utilityDialog.dismiss(); utilityDialog = null; }
     }
 
     @Override
@@ -484,74 +502,66 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         final String key = adapter.keyAt(position);
         if (key == null) return;
         final String pkg = adapter.uninstallPackageAt(position);
-        if (pkg == null) {
+        if (pkg == null && !adapter.isFolderAt(position)) {
             adapter.openTile(key);
             return;
         }
         RecyclerView.ViewHolder holder = grid.findViewHolderForAdapterPosition(position);
         if (holder == null) return;
         View anchor = holder.itemView.findViewById(R.id.card);
-        final long openedAt = SystemClock.uptimeMillis();
-        View panel = getLayoutInflater().inflate(R.layout.popup_app_menu, root, false);
-        ((TextView) panel.findViewById(R.id.appMenuTitle)).setText(adapter.labelAt(position));
-        LinearLayout rows = panel.findViewById(R.id.rows);
-        PopupWindow menu = glassPopup(panel, (int) (240 * density));
-        appMenu = menu;
-        menu.setOnDismissListener(() -> {
-            if (appMenu == menu) appMenu = null;
-            if (openPopup == menu) openPopup = null;
-        });
-        addInputRow(rows, menu, R.drawable.ic_app_open, getString(R.string.app_open), -1, () -> {
+        if (adapter.isFolderAt(position)) {
+            appMenu = AppTileMenu.show(this, root, anchor, adapter.labelAt(position), 0,
+                    () -> adapter.openTile(key), () -> beginMove(key), null, null, () -> appMenu = null);
+            return;
+        }
+        appMenu = AppTileMenu.show(this, root, anchor, adapter.labelAt(position),
+                R.string.folder_move_into, () -> {
             if (adapter.positionOf(key) >= 0) adapter.openTile(key);
-        });
-        addInputRow(rows, menu, R.drawable.ic_app_move, getString(R.string.app_move), -1,
-                () -> beginMove(key));
-        addInputRow(rows, menu, R.drawable.ic_app_uninstall, getString(R.string.app_uninstall), -1, () -> {
+        }, () -> beginMove(key), () -> moveToFolder(pkg), () -> {
             if (adapter.positionOf(key) < 0) return;
             try {
                 startActivity(new Intent(Intent.ACTION_DELETE, Uri.parse("package:" + pkg)));
             } catch (ActivityNotFoundException | SecurityException e) {
                 Toast.makeText(this, R.string.uninstall_unavailable, Toast.LENGTH_LONG).show();
             }
+        }, () -> {
+            appMenu = null;
         });
-        // Consume the opening Menu release/repeats; a fresh Menu press closes the popup.
-        for (int i = 0; i < rows.getChildCount(); i++) {
-            rows.getChildAt(i).setOnKeyListener((v, code, event) -> {
-                if (code == KeyEvent.KEYCODE_MENU) {
-                    if (event.getAction() == KeyEvent.ACTION_DOWN && event.getRepeatCount() == 0
-                            && event.getDownTime() > openedAt) menu.dismiss();
-                    return true;
-                }
-                return false;
-            });
-        }
-        showTileMenu(menu, panel, anchor);
-        rows.getChildAt(0).requestFocus();
     }
 
-    private void showTileMenu(PopupWindow menu, View panel, View anchor) {
-        Rect visible = new Rect();
-        root.getWindowVisibleDisplayFrame(visible);
-        int gap = Math.round(10 * density);
-        int width = Math.min(menu.getWidth(), visible.width() - 2 * gap);
-        panel.measure(View.MeasureSpec.makeMeasureSpec(width, View.MeasureSpec.EXACTLY),
-                View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED));
-        int height = panel.getMeasuredHeight();
-        int[] tile = new int[2];
-        anchor.getLocationOnScreen(tile);
-        int x = Math.max(visible.left + gap, Math.min(tile[0], visible.right - width - gap));
-        int below = tile[1] + anchor.getHeight() + gap;
-        int y = below + height <= visible.bottom - gap ? below : tile[1] - height - gap;
-        y = Math.max(visible.top + gap, Math.min(y, visible.bottom - height - gap));
-        menu.setWidth(width);
-        menu.setHeight(height);
-        panel.setAlpha(0f);
-        panel.setPivotY(y < tile[1] ? height : 0f);
-        panel.setScaleY(0.92f);
-        panel.setTranslationY((y < tile[1] ? 8 : -8) * density);
-        menu.showAtLocation(root, Gravity.TOP | Gravity.LEFT, x, y);
-        panel.animate().alpha(1f).scaleY(1f).translationY(0f).setDuration(220)
-                .setInterpolator(new android.view.animation.DecelerateInterpolator(1.6f)).start();
+    @Override
+    public void onFolderRequested() {
+        if (installedAppsDialog != null) installedAppsDialog.dismiss();
+        installedAppsDialog = new InstalledAppsDialog(this, adapter.folderPackages(), () -> {
+            installedAppsDialog = null;
+            restoreFocus();
+        }, this::moveToMain);
+        installedAppsDialog.show();
+    }
+
+    private void moveToFolder(String pkg) {
+        if (!adapter.setInFolder(pkg, true)) {
+            Toast.makeText(this, R.string.app_order_not_saved, Toast.LENGTH_LONG).show();
+            return;
+        }
+        lastFocusedKey = adapter.folderKey();
+        reloadApps(true);
+    }
+
+    private void moveToMain(String pkg) {
+        if (!adapter.setInFolder(pkg, false)) {
+            Toast.makeText(this, R.string.app_order_not_saved, Toast.LENGTH_LONG).show();
+            return;
+        }
+        if (installedAppsDialog != null) installedAppsDialog.dismiss();
+        adapter.reload(cards);
+        lastFocusedKey = adapter.keyForPackage(pkg);
+        reloadApps(true);
+    }
+
+    @Override
+    public void onUtilityRequested(String pkg, String label) {
+        utilityDialog = InstalledAppsDialog.launch(this, pkg, label);
     }
 
     private static boolean isConfirmKey(int code) {
@@ -809,7 +819,8 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
             return;
         }
         if (wifiDialog != null) wifiDialog.dismiss();
-        wifiDialog = new WifiDialog(this);
+        wifiDialog = new WifiDialog(this, settingsSidebar != null && settingsSidebar.isShowing()
+                ? settingsSidebar.focusTarget() : findViewById(R.id.btnWifi));
         wifiDialog.show();
     }
 
@@ -866,7 +877,16 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         boolean connected = YoutubeVpnLaunch.connected(this);
         String code = getSharedPreferences("vpn_status", MODE_PRIVATE).getString("profile_code", "");
         btnVpn.setText(VpnStatusLabel.text(connected, code));
-        btnVpn.setTextColor(getColorStateList(connected ? R.color.vpn_connected : R.color.vpn_disconnected));
+        VpnHealthState.Status status = connected
+                ? (vpnHealth != null ? vpnHealth.status() : VpnHealthState.Status.UNREACHABLE)
+                : VpnHealthState.Status.OFF;
+        // Until the first tunnel probe starts, an existing tunnel is already orange, never red.
+        int color = !connected ? R.color.vpn_disconnected
+                : status == VpnHealthState.Status.ONLINE ? R.color.vpn_connected : R.color.vpn_unreachable;
+        btnVpn.setTextColor(getColorStateList(color));
+        btnVpn.setContentDescription(btnVpn.getText() + (connected
+                ? status == VpnHealthState.Status.ONLINE ? ": соединение работает" : ": нет подтверждённого соединения"
+                : ": отключён"));
     }
 
     /** Profile selection stays on Home; status is based on the actual tunnel. */

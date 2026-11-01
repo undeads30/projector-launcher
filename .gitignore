@@ -9,3 +9,7 @@
 .idea/
 .vscode/
 .DS_Store
+
+/dist/LauncherTV.apk
+/launcher/app/libs/*.aar
+/launcher/app/src/main/assets/voice-model.zip

@@ -3,6 +3,7 @@ package com.gathin.tvhome;
 import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
+import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
 import android.content.pm.ResolveInfo;
 import android.graphics.Bitmap;
@@ -47,10 +48,13 @@ public class AppAdapter extends RecyclerView.Adapter<AppAdapter.Holder> {
         boolean onTileVerticalKey(int position, int keyCode);
 
         void onTileMenuRequested(int position);
+
+        void onFolderRequested();
+        void onUtilityRequested(String pkg, String label);
     }
 
     static final class Entry {
-        static final int APP = 0, HOME_SETTINGS = 1, CARD = 2;
+        static final int APP = 0, HOME_SETTINGS = 1, CARD = 2, FOLDER = 3, UTILITY = 4;
 
         final int kind;
         final String label;
@@ -113,6 +117,7 @@ public class AppAdapter extends RecyclerView.Adapter<AppAdapter.Holder> {
     private final Set<String> hidden;
     private final boolean showHomeSettings;
     private final List<Entry> items = new ArrayList<>();
+    private List<String> folderPackages = Collections.emptyList();
 
     AppAdapter(Context ctx, TileListener listener, int dockSize, Config cfg) {
         this.ctx = ctx;
@@ -132,6 +137,9 @@ public class AppAdapter extends RecyclerView.Adapter<AppAdapter.Holder> {
      */
     void reload(List<Cards.Card> cards) {
         PackageManager pm = ctx.getPackageManager();
+        SharedPreferences folderPrefs = ctx.getSharedPreferences("app_folder", Context.MODE_PRIVATE);
+        Set<String> movedIn = folderPrefs.getStringSet("in", Collections.emptySet());
+        Set<String> movedOut = folderPrefs.getStringSet("out", Collections.emptySet());
         Intent probe = new Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LEANBACK_LAUNCHER);
         List<ResolveInfo> found = pm.queryIntentActivities(probe, 0);
         Map<String, Cards.Card> cardByPkg = new HashMap<>();
@@ -140,12 +148,13 @@ public class AppAdapter extends RecyclerView.Adapter<AppAdapter.Holder> {
         for (ResolveInfo ri : found) {
             if (ri.activityInfo == null) continue;
             String pkg = ri.activityInfo.packageName;
-            if (pkg.equals(ctx.getPackageName()) || hidden.contains(pkg)) continue;
+            if (pkg.equals(ctx.getPackageName()) || (hidden.contains(pkg) && !movedOut.contains(pkg))) continue;
             ComponentName component = new ComponentName(pkg, ri.activityInfo.name);
             Cards.Card card = cardByPkg.get(pkg);
             if (card != null && !card.component.equals(component)) continue;   // the card stands in for this tile
             Drawable banner = ri.activityInfo.loadBanner(pm);
             if (banner == null) banner = ri.activityInfo.applicationInfo.loadBanner(pm);
+            if ("mov.film".equals(pkg)) banner = ctx.getDrawable(R.drawable.banner_kino);
             Drawable icon = ri.loadIcon(pm);
             if (card != null) {
                 fresh.add(new Entry(Entry.CARD, card.label, component, banner, icon, card.caption, card.accent));
@@ -172,10 +181,58 @@ public class AppAdapter extends RecyclerView.Adapter<AppAdapter.Holder> {
                     new ComponentName(ctx, HomeSettingsActivity.class), null,
                     ctx.getDrawable(R.drawable.ic_home_settings), null, 0));
         }
+        // Explicitly moved-out apps must be available even without a TV launcher activity.
+        for (String pkg : movedOut) {
+            boolean present = false;
+            for (Entry entry : fresh) if (pkg.equals(entry.pkg)) present = true;
+            if (present) continue;
+            try {
+                android.content.pm.ApplicationInfo app = pm.getApplicationInfo(pkg, 0);
+                Intent launch = pm.getLeanbackLaunchIntentForPackage(pkg);
+                if (launch == null) launch = pm.getLaunchIntentForPackage(pkg);
+                ComponentName component = launch == null ? new ComponentName(pkg, pkg + ".UtilitySettings")
+                        : launch.getComponent();
+                fresh.add(new Entry(launch == null ? Entry.UTILITY : Entry.APP,
+                        String.valueOf(pm.getApplicationLabel(app)), component, null,
+                        pm.getApplicationIcon(app), null, 0));
+            } catch (PackageManager.NameNotFoundException ignored) { }
+        }
         items.clear();
         items.addAll(fresh);
-        applyOrder(Arrays.asList(ctx.getSharedPreferences("tile_order", Context.MODE_PRIVATE)
-                .getString("components", "").split("\n")));
+        List<String> savedOrder = Arrays.asList(ctx.getSharedPreferences("tile_order", Context.MODE_PRIVATE)
+                .getString("components", "").split("\n"));
+        applyOrder(savedOrder);
+        // Preserve the existing main row before grouping utilities, including the user's saved order.
+        List<String> mainApps = new ArrayList<>();
+        for (int i = 0; i < Math.min(dockSize, items.size()); i++) mainApps.add(items.get(i).pkg);
+        if (folderPrefs.contains("initial_main")) {
+            mainApps = new ArrayList<>(folderPrefs.getStringSet("initial_main", Collections.emptySet()));
+        } else {
+            folderPrefs.edit().putStringSet("initial_main", new HashSet<>(mainApps)).commit();
+        }
+        List<String> installed = new ArrayList<>();
+        Set<String> candidates = new HashSet<>(InstalledAppsFolder.PACKAGES);
+        candidates.addAll(movedIn);
+        for (String pkg : candidates) {
+            try {
+                pm.getApplicationInfo(pkg, 0);
+                installed.add(pkg);
+            } catch (PackageManager.NameNotFoundException ignored) { }
+        }
+        folderPackages = InstalledAppsFolder.orderedMembers(installed, mainApps, movedIn, movedOut,
+                Arrays.asList(folderPrefs.getString("order", "").split("\n")));
+        {
+            items.removeIf(entry -> folderPackages.contains(entry.pkg));
+            Entry folder = new Entry(Entry.FOLDER, ctx.getString(R.string.our_apps_folder),
+                    new ComponentName(ctx.getPackageName(), ctx.getPackageName() + ".OurAppsFolder"),
+                    null, ctx.getDrawable(R.drawable.ic_folder), null, 0xFF759DCC);
+            if (savedOrder.contains(folder.component.flattenToShortString())) {
+                items.add(folder);
+                applyOrder(savedOrder);
+            } else {
+                items.add(Math.min(dockSize, items.size()), folder);
+            }
+        }
         notifyDataSetChanged();
     }
 
@@ -204,7 +261,7 @@ public class AppAdapter extends RecyclerView.Adapter<AppAdapter.Holder> {
     public void onBindViewHolder(@NonNull Holder h, int position) {
         Entry e = items.get(position);
         h.name.setText(e.name);
-        h.name.setVisibility(position < dockSize ? View.INVISIBLE : View.VISIBLE);   // the dock has no labels
+        h.name.setVisibility(position < dockSize || e.kind == Entry.FOLDER ? View.INVISIBLE : View.VISIBLE);
         boolean focused = h.card.isFocused();   // a rebind after reload() can hit the focused tile
         h.name.setAlpha(focused ? 1f : 0f);
         h.card.setScaleX(focused ? FOCUS_SCALE : 1f);
@@ -261,11 +318,45 @@ public class AppAdapter extends RecyclerView.Adapter<AppAdapter.Holder> {
     String uninstallPackageAt(int position) {
         if (position < 0 || position >= items.size()) return null;
         Entry e = items.get(position);
-        return e.kind == Entry.HOME_SETTINGS ? null : e.pkg;
+        return e.kind == Entry.HOME_SETTINGS || e.kind == Entry.FOLDER ? null : e.pkg;
+    }
+
+    boolean isFolderAt(int position) {
+        return position >= 0 && position < items.size() && items.get(position).kind == Entry.FOLDER;
+    }
+
+    List<String> folderPackages() { return new ArrayList<>(folderPackages); }
+
+    boolean setInFolder(String pkg, boolean inFolder) {
+        SharedPreferences prefs = ctx.getSharedPreferences("app_folder", Context.MODE_PRIVATE);
+        Set<String> in = new HashSet<>(prefs.getStringSet("in", Collections.emptySet()));
+        Set<String> out = new HashSet<>(prefs.getStringSet("out", Collections.emptySet()));
+        if (inFolder) { in.add(pkg); out.remove(pkg); }
+        else { out.add(pkg); in.remove(pkg); }
+        return prefs.edit().putStringSet("in", in).putStringSet("out", out).commit();
+    }
+
+    String keyForPackage(String pkg) {
+        for (Entry entry : items) if (pkg.equals(entry.pkg) && entry.kind != Entry.FOLDER)
+            return entry.component.flattenToShortString();
+        return null;
+    }
+
+    String folderKey() {
+        for (Entry entry : items) if (entry.kind == Entry.FOLDER) return entry.component.flattenToShortString();
+        return null;
     }
 
     /** Opens the tile's activity by explicit component, with no extras: a card can name nothing else. */
     private void launch(Entry e) {
+        if (e.kind == Entry.UTILITY) {
+            listener.onUtilityRequested(e.pkg, e.label);
+            return;
+        }
+        if (e.kind == Entry.FOLDER) {
+            listener.onFolderRequested();
+            return;
+        }
         if (e.kind == Entry.HOME_SETTINGS) {
             ctx.startActivity(new Intent(ctx, HomeSettingsActivity.class)
                     .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));

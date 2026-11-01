@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="our_apps_folder">Our apps</string>
+    <string name="folder_files">Files</string>
+    <string name="folder_keyboard">Keyboard</string>
+    <string name="folder_screensaver">Screensaver</string>
+    <string name="folder_hdmi">HDMI prompt helper</string>
+    <string name="folder_hint">OK — open · ≡ — menu · Back — close</string>
+    <string name="folder_move_into">Move to folder</string>
+    <string name="folder_move_to_main">Move out of folder</string>
+    <string name="folder_empty">The folder is empty. Use ≡ on an app to move it here.</string>
+    <string name="folder_helper_enabled">Enabled. This helper works in the background and automatically closes HDMI connection prompts.</string>
+    <string name="folder_helper_disabled">Disabled. This helper closes HDMI connection prompts when its accessibility service is enabled.</string>
+</resources>

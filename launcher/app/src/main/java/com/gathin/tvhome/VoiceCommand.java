@@ -1,0 +1,5 @@
+package com.gathin.tvhome;
+enum VoiceCommand {
+    NONE, YOUTUBE, VK, KINO, BROWSER, VOLUME_UP, VOLUME_DOWN, MUTE, UNMUTE,
+    HOME, BACK, PAUSE, PLAY, HDMI_1, HDMI_2, HDMI_3, POWER_MENU
+}

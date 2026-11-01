@@ -21,6 +21,7 @@ import android.os.Handler;
 import android.os.Looper;
 import android.text.InputType;
 import android.view.Gravity;
+import android.view.KeyEvent;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.Window;
@@ -43,6 +44,7 @@ final class WifiDialog {
     private final TextView refresh;
     private final Handler handler = new Handler(Looper.getMainLooper());
     private Dialog passwordDialog;
+    private Dialog networkMenu;
     private boolean registered;
     private String connecting;
     private String failedSsid;
@@ -70,6 +72,10 @@ final class WifiDialog {
     };
 
     WifiDialog(Activity activity) {
+        this(activity, activity.findViewById(R.id.btnWifi));
+    }
+
+    WifiDialog(Activity activity, View returnFocus) {
         this.activity = activity;
         wifi = (WifiManager) activity.getApplicationContext().getSystemService(Context.WIFI_SERVICE);
         dialog = new Dialog(activity);
@@ -104,8 +110,10 @@ final class WifiDialog {
                 registered = false;
             }
             if (passwordDialog != null) passwordDialog.dismiss();
-            View anchor = activity.findViewById(R.id.btnWifi);
-            if (anchor != null) anchor.requestFocus();
+            if (networkMenu != null) networkMenu.dismiss();
+            if (returnFocus != null) returnFocus.post(() -> {
+                if (returnFocus.isAttachedToWindow()) returnFocus.requestFocus();
+            });
         });
     }
 
@@ -202,6 +210,12 @@ final class WifiDialog {
                         + "  " + (WifiManager.calculateSignalLevel(entry.level, 4) + 1) + "/4";
                 ((TextView) row.findViewById(R.id.status)).setText(status);
                 row.setOnClickListener(v -> choose(entry));
+                row.setOnKeyListener((v, code, event) -> {
+                    if (code != KeyEvent.KEYCODE_MENU) return false;
+                    if (event.getAction() == KeyEvent.ACTION_DOWN && event.getRepeatCount() == 0)
+                        showNetworkMenu(entry);
+                    return true;
+                });
                 rows.addView(row);
                 if (entry.key().equals(focusKey)) restore = row;
             }
@@ -210,6 +224,108 @@ final class WifiDialog {
                     : networks.isEmpty() ? activityText(R.string.wifi_empty) : activityText(R.string.wifi_choose));
             if (restore != null) restore.requestFocus();
             else if (hadFocus) refresh.requestFocus();
+        } catch (SecurityException e) { message.setText(R.string.wifi_permission); }
+    }
+
+    private List<WifiConfiguration> savedNetworks(WifiNetworks.Entry entry) {
+        List<WifiConfiguration> result = new ArrayList<>();
+        List<WifiConfiguration> saved = wifi.getConfiguredNetworks();
+        if (saved != null) for (WifiConfiguration config : saved) {
+            if (!WifiNetworks.quote(entry.ssid).equals(config.SSID)) continue;
+            boolean match = entry.security == WifiNetworks.Security.PSK
+                    ? config.allowedKeyManagement.get(WifiConfiguration.KeyMgmt.WPA_PSK)
+                    : entry.security == WifiNetworks.Security.WEP ? config.wepKeys[0] != null
+                    : entry.security == WifiNetworks.Security.OPEN
+                    ? config.allowedKeyManagement.get(WifiConfiguration.KeyMgmt.NONE) && config.wepKeys[0] == null
+                    : config.allowedKeyManagement.get(WifiConfiguration.KeyMgmt.WPA_EAP)
+                        || config.allowedKeyManagement.get(WifiConfiguration.KeyMgmt.IEEE8021X);
+            if (match) result.add(config);
+        }
+        return result;
+    }
+
+    private void showNetworkMenu(WifiNetworks.Entry entry) {
+        try {
+            boolean saved = !savedNetworks(entry).isEmpty();
+            if (networkMenu != null) networkMenu.dismiss();
+            Dialog menu = new Dialog(activity);
+            menu.requestWindowFeature(Window.FEATURE_NO_TITLE);
+            View content = activity.getLayoutInflater().inflate(R.layout.popup_app_menu, panel, false);
+            ((TextView) content.findViewById(R.id.appMenuTitle)).setText(entry.ssid);
+            LinearLayout actions = content.findViewById(R.id.rows);
+            boolean connected = entry.ssid.equals(currentSsid());
+            int connectedId = connected ? wifi.getConnectionInfo().getNetworkId() : -1;
+            addMenuAction(actions, menu, R.drawable.ic_wifi,
+                    connected ? R.string.wifi_disconnect_action : R.string.wifi_connect_action,
+                    connected ? () -> disconnect(entry, connectedId) : () -> choose(entry));
+            if (saved) addMenuAction(actions, menu, R.drawable.ic_app_uninstall,
+                    R.string.wifi_forget, () -> forget(entry));
+            menu.setContentView(content);
+            menu.setOnKeyListener((d, code, event) -> {
+                if (code != KeyEvent.KEYCODE_MENU) return false;
+                if (event.getAction() == KeyEvent.ACTION_DOWN && event.getRepeatCount() == 0) menu.dismiss();
+                return true;
+            });
+            menu.setOnDismissListener(d -> {
+                networkMenu = null;
+                if (dialog.isShowing()) for (int i = 0; i < rows.getChildCount(); i++) {
+                    View row = rows.getChildAt(i);
+                    if (entry.key().equals(row.getTag())) { row.requestFocus(); break; }
+                }
+            });
+            networkMenu = menu;
+            menu.show();
+            if (menu.getWindow() != null) {
+                menu.getWindow().setBackgroundDrawable(new ColorDrawable(Color.TRANSPARENT));
+                menu.getWindow().setDimAmount(0.15f);
+                menu.getWindow().setLayout(Math.min(dp(280),
+                        activity.getResources().getDisplayMetrics().widthPixels * 4 / 5), -2);
+            }
+            actions.getChildAt(0).requestFocus();
+        } catch (SecurityException e) { message.setText(R.string.wifi_permission); }
+    }
+
+    private void addMenuAction(LinearLayout actions, Dialog menu, int icon, int label, Runnable action) {
+        View row = activity.getLayoutInflater().inflate(R.layout.item_input, actions, false);
+        ((ImageView) row.findViewById(R.id.icon)).setImageResource(icon);
+        ((TextView) row.findViewById(R.id.title)).setText(label);
+        row.findViewById(R.id.dot).setVisibility(View.GONE);
+        row.findViewById(R.id.status).setVisibility(View.GONE);
+        row.setOnClickListener(v -> { menu.dismiss(); action.run(); });
+        actions.addView(row);
+    }
+
+    private void disconnect(WifiNetworks.Entry entry, int networkId) {
+        try {
+            if (Build.VERSION.SDK_INT >= 29) { message.setText(R.string.wifi_android_restricted); return; }
+            // A stale menu must never disconnect a different, newly connected network.
+            WifiInfo current = wifi.getConnectionInfo();
+            if (current == null || current.getNetworkId() != networkId
+                    || !entry.ssid.equals(currentSsid())) { render(); return; }
+            // Disable this saved profile until explicitly connected again; keep its credentials.
+            boolean disabled = wifi.disableNetwork(networkId);
+            if (disabled && entry.ssid.equals(connecting)) {
+                connecting = null;
+                handler.removeCallbacks(timeout);
+            }
+            notice = activityText(disabled ? R.string.wifi_disconnected : R.string.wifi_disconnect_failed);
+            render();
+        } catch (SecurityException e) { message.setText(R.string.wifi_permission); }
+    }
+
+    private void forget(WifiNetworks.Entry entry) {
+        try {
+            if (Build.VERSION.SDK_INT >= 29) { message.setText(R.string.wifi_android_restricted); return; }
+            boolean removed = true;
+            for (WifiConfiguration config : savedNetworks(entry))
+                removed = wifi.removeNetwork(config.networkId) && removed;
+            if (entry.ssid.equals(connecting)) {
+                connecting = null;
+                handler.removeCallbacks(timeout);
+            }
+            if (entry.ssid.equals(failedSsid)) failedSsid = null;
+            notice = activityText(removed ? R.string.wifi_forgotten : R.string.wifi_forget_failed);
+            render();
         } catch (SecurityException e) { message.setText(R.string.wifi_permission); }
     }
 

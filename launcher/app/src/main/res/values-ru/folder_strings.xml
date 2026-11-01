@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="our_apps_folder">Наши приложения</string>
+    <string name="folder_files">Файлы</string>
+    <string name="folder_keyboard">Клавиатура</string>
+    <string name="folder_screensaver">Заставка</string>
+    <string name="folder_hdmi">Закрытие уведомления HDMI</string>
+    <string name="folder_hint">ОК — открыть · ≡ — меню · Назад — закрыть</string>
+    <string name="folder_move_into">Переместить в папку</string>
+    <string name="folder_move_to_main">Переместить из папки</string>
+    <string name="folder_empty">Папка пуста. Нажмите ≡ на приложении, чтобы переместить его сюда.</string>
+    <string name="folder_helper_enabled">Включено. Помощник работает в фоне и автоматически закрывает уведомления о подключении HDMI.</string>
+    <string name="folder_helper_disabled">Выключено. Помощник закрывает уведомления о подключении HDMI, когда его служба специальных возможностей включена.</string>
+</resources>

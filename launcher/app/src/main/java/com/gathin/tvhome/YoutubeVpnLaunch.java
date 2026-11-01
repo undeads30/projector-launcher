@@ -40,6 +40,15 @@ final class YoutubeVpnLaunch {
   if(guid.isEmpty()) {Toast.makeText(c,"Сначала настройте VPN для этого приложения",Toast.LENGTH_LONG).show();return;}
   startProfile(c,guid,()->c.startActivity(target));
  }
+ // Search owns its request: a newer query replaces a pending launch; Back cancels only that token.
+ static int search(Context c,Intent target,java.util.function.BooleanSupplier valid,Runnable launched) {
+  String pkg=target.getComponent().getPackageName();
+  String guid=c.getSharedPreferences("vpn_auto",Context.MODE_PRIVATE).getString(VpnLaunchPolicy.profileKey(pkg),"");
+  if(guid.isEmpty()){Toast.makeText(c,"Сначала настройте VPN для этого приложения",Toast.LENGTH_LONG).show();return -1;}
+  startProfile(c,guid,()->{if(valid.getAsBoolean()){launched.run();c.startActivity(target);}});
+  return requestVersion;
+ }
+ static void cancelSearch(int token){if(token==requestVersion){requestVersion++;pending=false;}}
  static void select(Context c,String choice) {
   if("OFF".equals(choice)) {
    stop(c);
